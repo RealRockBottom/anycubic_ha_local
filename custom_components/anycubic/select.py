@@ -16,6 +16,8 @@ _VALUES = {v: k for k, v in _MODES.items()}
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
+    if entry.runtime_data.hs.resin:
+        return  # The Kobras' print speed modes; a resin printer has none.
     add([AnycubicSpeedSelect(entry.runtime_data)])
 
 

@@ -15,6 +15,8 @@ from .entity import AnycubicAceEntity, async_setup_ace_entities
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
     coord: AnycubicCoordinator = entry.runtime_data
+    if coord.hs.resin:
+        return  # ACE drying and auto-feed: there is no ACE on a resin printer.
     async_setup_ace_entities(
         entry, coord, add,
         lambda box_id: ([AnycubicAceDryingSwitch(coord, box_id)] if box_has_dryer(box_id) else [])

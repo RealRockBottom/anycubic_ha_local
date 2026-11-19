@@ -16,6 +16,7 @@ from .coordinator import AnycubicCoordinator
 from .definitions import (
     ACE_SENSORS,
     PRINTER_SENSORS,
+    RESIN_SENSORS,
     AceSensorEntityDescription,
     AnycubicSensorEntityDescription,
     slot_attributes,
@@ -25,6 +26,13 @@ from .entity import AnycubicAceEntity, AnycubicEntity, async_setup_ace_entities
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
     coord: AnycubicCoordinator = entry.runtime_data
+    if coord.hs.resin:
+        # A resin printer: the job's status and progress, and its resin. No nozzle, bed,
+        # filament, ACE or spool holder.
+        add([AnycubicSensor(coord, d) for d in PRINTER_SENSORS if not d.fdm_only]
+            + [AnycubicSensor(coord, d) for d in RESIN_SENSORS]
+            + [AnycubicPauseReasonSensor(coord)])
+        return
     enclosed = coord.hs.model_id in ENCLOSED_MODELS
     add([AnycubicSensor(coord, d) for d in PRINTER_SENSORS if enclosed or not d.enclosed_only])
     add([AnycubicPauseReasonSensor(coord), AnycubicFilamentUsedSensor(coord)])

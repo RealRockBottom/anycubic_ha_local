@@ -17,6 +17,13 @@ from cryptography.hazmat.primitives.padding import PKCS7
 
 from .exceptions import CloudModeError, HandshakeError
 
+# /info "deviceType" of a resin printer. The Kobras answer "fdm".
+DEVICE_TYPE_RESIN = "lcd"
+
+# The broker address in the decrypted /ctrl answer. The Kobras give "mqtts://host:port"; the
+# Photon P1 (firmware 5.0.6.7) gives a bare "host:port". Either is the same TLS broker.
+_BROKER = re.compile(r"(?:mqtts?://)?([^:/]+):(\d+)")
+
 
 def sign(token: str, ts: int, nonce: str) -> str:
     """sign = md5(md5(token[:16]) + str(ts) + nonce). Returns the 32-char hex digest."""
@@ -54,7 +61,21 @@ class HandshakeResult:
     serial: str
     mac: str | None = None          # from /info "usn" (e.g. "uuid:fdm:AA-BB-CC-DD-EE-FF")
     model_name: str | None = None   # from /info "modelName" (e.g. "Anycubic Kobra S1 Max")
-    device_type: str | None = None  # from /info "deviceType" (e.g. "fdm")
+    device_type: str | None = None  # from /info "deviceType" (e.g. "fdm", "lcd")
+    # The MQTT client id the /ctrl answer names, if it names one. The Photon P1 refuses any
+    # other ("not authorized"); the Kobras accept their own random one.
+    client_id: str | None = None
+
+    @property
+    def resin(self) -> bool:
+        """A resin (LCD/MSLA) printer, the Photon P1: /info says deviceType "lcd".
+
+        It shares the handshake with the Kobras but not the broker's topics or reports:
+        queries go to `pc/printer/...`, the broker grants only `.../+/report` subscriptions,
+        and there is no `info` report (see RESIN_QUERY_TYPES). Read from the printer's own
+        answer rather than a model list, so a later resin model gets the same handling.
+        """
+        return self.device_type == DEVICE_TYPE_RESIN
 
 
 def _parse_mac(usn) -> str | None:
@@ -329,7 +350,7 @@ def do_handshake(host: str, fetch=_http_fetch) -> HandshakeResult:
         raise HandshakeError(_NOT_A_PRINTER, step=STEP_DECRYPT, reason=REASON_NOT_A_PRINTER,
                              detail=about)
     broker = data.get("broker")
-    m = re.match(r"mqtts?://([^:]+):(\d+)", broker) if isinstance(broker, str) else None
+    m = _BROKER.match(broker) if isinstance(broker, str) else None
     if m is None or not all(key in data for key in ("username", "password", "deviceId")):
         raise HandshakeError(_NOT_A_PRINTER, step=STEP_DECRYPT, reason=REASON_NOT_A_PRINTER,
                              detail=about)
@@ -339,7 +360,8 @@ def do_handshake(host: str, fetch=_http_fetch) -> HandshakeResult:
         device_id=data["deviceId"], model_id=str(model_id), serial=serial,
         mac=_parse_mac(info.get("usn")),
         model_name=_text_or_none(info.get("modelName")),
-        device_type=_text_or_none(info.get("deviceType")))
+        device_type=_text_or_none(info.get("deviceType")),
+        client_id=_text_or_none(data.get("clientId")) or None)
 
 
 def _text_or_none(value) -> str | None:

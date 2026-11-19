@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass, field
 
 from .const import (
+    JOB_PHASES,
     LIGHT_TYPE_CHAMBER,
     PAUSE_PAUSED,
     PAUSED_PHASES,
@@ -143,6 +144,11 @@ class PrinterState:
     camera_url: str | None = None
     printing: bool = False
     paused: bool = False
+    # Resin printers only (see apply_resin_print). `filament_used` holds a resin job's
+    # supplies_usage, which is millilitres of resin there, not millimetres of filament.
+    layer_height: float | None = None       # mm, the job's z_thick
+    model_height: float | None = None       # mm, the job's model_hight (wire spelling)
+    preheat_remaining: int | None = None    # resin preheat left; None when not preheating
 
 
 @dataclass(frozen=True)
@@ -294,6 +300,71 @@ def apply_progress(state: PrinterState, data: dict) -> bool:
         return False
     _fold(state, data, _PROGRESS_FIELDS)
     return True
+
+
+# ---- Resin printers (Photon P1) ---------------------------------------------------------------
+# A resin printer sends no `info`. What it is doing comes from two envelopes, handed on whole by
+# the transport: `status` ("free" / "busy", data null) and `print`, whose `state` is the job's
+# phase and whose `data` carries the same progress keys a Kobra's `print` report does.
+_RESIN_JOB_FIELDS = {
+    "layer_height": "z_thick",
+    "model_height": "model_hight",
+}
+# A job is over in these phases; a later `status` "busy" does not make it a job again.
+_RESIN_ENDED = STOPPED_PHASES | {"finished", "idle"}
+
+
+def apply_resin_status(state: PrinterState, report: dict) -> None:
+    """Fold a resin `status` report: whether the printer is free or busy.
+
+    Free is idle. Busy says less than the `print` report's phase does, so a phase already
+    known is kept and the raw "busy" shown only when there is none (a printer busy with
+    something that is not a job, or a job begun before Home Assistant was watching).
+    """
+    raw = report.get("state")
+    if not isinstance(raw, str):
+        return
+    state.raw_state = raw
+    if raw == STATE_FREE:
+        state.status, state.printing, state.paused = "idle", False, False
+        state.preheat_remaining = None
+    elif state.status is None or state.status in _RESIN_ENDED:
+        state.status = raw
+
+
+def apply_resin_print(state: PrinterState, report: dict) -> bool:
+    """Fold a resin `print` report: the job's phase and progress. Returns whether it had a phase.
+
+    Captured phases: "monitoring" (the pre-print checks, sent with action "autoOperation") and
+    "preheating" (action "start"). Every phase is shown as it comes; `printing` and `paused`
+    follow the names the Kobras use for the same thing.
+    """
+    data = report.get("data")
+    if isinstance(data, dict):
+        # Same keys as a Kobra's `print` report: progress, curr_layer, total_layers, …
+        _fold(state, data, _PROGRESS_FIELDS)
+        _fold(state, data, _RESIN_JOB_FIELDS)
+        heating = data.get("heating_remain_time")
+        if isinstance(heating, int) and not isinstance(heating, bool):
+            # -1 is the printer's "not heating / not known".
+            state.preheat_remaining = heating if heating >= 0 else None
+    phase = report.get("state")
+    if not isinstance(phase, str) or not phase:
+        return False
+    state.status = phase
+    if phase in JOB_PHASES:
+        state.raw_state = "busy"
+    state.printing = phase == "printing"
+    state.paused = phase in PAUSED_PHASES
+    if phase != "preheating":
+        state.preheat_remaining = None
+    return True
+
+
+def apply_resin_lan_info(state: PrinterState, data) -> None:
+    """Fold a resin `lanInfo` answer: the firmware version."""
+    if isinstance(data, dict) and isinstance(data.get("version"), str):
+        state.firmware = data["version"]
 
 
 def display_filename(name: str | None) -> str | None:

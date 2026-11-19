@@ -1,8 +1,9 @@
 # Anycubic 3D Printer - Local Control - NO Cloud
 
-A Home Assistant integration for the **Anycubic Kobra 3 / 4 / X / S1 series** and the ACE / ACE 2
-multi-color box. It talks to the printer's own **LAN Mode** on your network: **no Anycubic cloud
-account, no rooting, no custom firmware.**
+A Home Assistant integration for the **Anycubic Kobra 3 / 4 / X / S1 series**, the ACE / ACE 2
+multi-color box, and the **Photon P1** resin printer (status and progress). It talks to the
+printer's own **LAN Mode** on your network: **no Anycubic cloud account, no rooting, no custom
+firmware.**
 
 [![hacs](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz)
 [![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chrisfore&repository=anycubic_ha_local&category=integration)
@@ -40,7 +41,8 @@ only the entities that model has.
 | Kobra 4 | ✅ Validated by a user | — |
 | Kobra X | ✅ Validated by a user | — |
 | Kobra 2 Pro / Plus / Max | ⚠️ Experimental, older protocol, not validated | — |
-| Photon (resin) | ❌ No local LAN control | — |
+| Photon P1 (resin) | ✅ Validated on hardware: status and progress only, see [Photon P1](#photon-p1-resin) | — |
+| Other Photon (resin) | ❌ No local LAN control known | — |
 
 - Chamber temperature, chamber light and the box fan exist only on the enclosed **S1 / S1 Max**.
 - The **Kobra X** built-in 4-color changer shows up as a device named **Multi-color unit**
@@ -60,6 +62,27 @@ you the basic entities. To get it fully supported:
 
 If it cannot connect at all, say so in the issue with your model and firmware version. Older
 firmware is the usual cause: update the printer first.
+
+### Photon P1 (resin)
+
+The Photon P1 speaks the same LAN handshake on a broker of its own (port 8883). It gets:
+
+- **Sensors:** Status, Progress, Current / Total layers, Time remaining, Elapsed time, File
+  name, Resin used (ml), Layer height, Model height, Firmware, Pause reason.
+- **Binary sensors and events:** Printing, Paused, and the Print event entity (started,
+  paused, resumed, finished, stopped).
+
+The status shows the P1's own phases: *Idle*, *monitoring* (its checks before the first layer),
+*preheating* (resin heating), *printing*, and so on.
+
+Not yet: pause, resume and stop, the LED, the camera, and printing from Home Assistant. None of
+their commands has been captured from a P1, and the integration does not send guesses to a
+printer. If you have a P1 and Photon Workshop, a capture of those commands is welcome in an issue.
+
+**One connection at a time.** The P1 lets in only one LAN client under the login it hands out,
+so Home Assistant and **Photon Workshop in LAN mode take the connection from each other.** While
+Workshop is connected, Home Assistant reconnects and the two keep swapping. Close Workshop's
+LAN connection when you are done with it.
 
 ## Installation
 
@@ -242,7 +265,7 @@ automation:
 
 | Type | Entities |
 | --- | --- |
-| Sensor | Status, Pause reason, Nozzle / Bed / Chamber temperature, Progress, Current / Total layers, Time remaining, Elapsed time, Filament used, File name, Firmware, Bed cool-down |
+| Sensor | Status, Pause reason, Nozzle / Bed / Chamber temperature, Progress, Current / Total layers, Time remaining, Elapsed time, Filament used, File name, Firmware, Bed cool-down; on the Photon P1, Resin used, Layer height, Model height |
 | Image | Object thumbnail, Object top view (the printer's own render of the current job) |
 | Binary sensor | Printing, Paused, Bed needs clearing |
 | Event | Print event |
@@ -324,7 +347,7 @@ to return to the stock stream.
 
 ## How it works
 
-LAN Mode runs a local MQTT broker on the printer (TLS, port 9883). The printer sends its status
+LAN Mode runs a local MQTT broker on the printer (TLS, port 9883; 8883 on the Photon P1). The printer sends its status
 there and takes commands there. The login is fetched each time the integration connects and is
 never saved, so nothing sensitive is stored in Home Assistant. Files are sent straight to the
 printer over your network.

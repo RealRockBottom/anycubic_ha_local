@@ -411,7 +411,9 @@ STOPPED_PHASES = frozenset({"stopping", "stoped", "stopped"})
 # the first layer as well as the print itself (captured on a Kobra 3). A busy printer with
 # no job, drying or loading filament, is in none of them: its status is the raw "busy".
 JOB_PHASES = frozenset({"preheating", "auto_leveling", "vibrating", "flow_calibrating",
-                        "printing", "pausing", "paused", "resuming", "resumed"})
+                        "printing", "pausing", "paused", "resuming", "resumed",
+                        # A resin job's checks before the first layer (Photon P1).
+                        "monitoring"})
 
 # `type` of the chamber light inside a `light` object. Shared by the command builder and the
 # report parser on purpose: the printer answers a light command with a bare light object,
@@ -421,9 +423,36 @@ LIGHT_TYPE_CHAMBER = 2
 LIGHT_TYPE_CAMERA = 3
 
 
-def query_topic(model_id: str, device_id: str, msg_type: str) -> str:
-    return f"{PREFIX}/web/printer/{model_id}/{device_id}/{msg_type}"
+def query_topic(model_id: str, device_id: str, msg_type: str, resin: bool = False) -> str:
+    # A resin printer takes requests on `pc/printer/...`, where Photon Workshop sends them.
+    return f"{PREFIX}/{'pc' if resin else 'web'}/printer/{model_id}/{device_id}/{msg_type}"
 
 
 def report_prefix(model_id: str, device_id: str) -> str:
     return f"{PREFIX}/printer/public/{model_id}/{device_id}"
+
+
+def report_subscription(model_id: str, device_id: str, resin: bool = False) -> str:
+    """The topic filter that receives this printer's reports.
+
+    A resin printer's broker refuses `.../#` (SUBACK failure) and grants only the filter Photon
+    Workshop uses, one report type per level, ending in `/report`. Its reports still arrive on
+    `printer/public/...`, so nothing that reads them changes.
+    """
+    if resin:
+        return f"{PREFIX}/printer/+/{model_id}/{device_id}/+/report"
+    return f"{report_prefix(model_id, device_id)}/#"
+
+
+# ---- Resin printers (Photon P1, /info deviceType "lcd") -------------------------------------
+# Captured from a Photon P1 on firmware 5.0.6.7 and from Photon Workshop 4.2.1's own MQTT log.
+# What is polled. `status` says free or busy and carries no data; `light` is the one lamp. The
+# printer pushes `print` itself as a job changes phase; it is asked as well, so a job already
+# running when Home Assistant connects is seen without waiting for its next push. Asked while
+# idle, `print` is answered with a `status` report, so asking costs nothing then.
+RESIN_QUERY_TYPES = ("status", "print", "light")
+# Asked once at connect: the firmware version, and the smart-feature switches (resin heating,
+# light-off compensation, …) for diagnostics.
+RESIN_CONNECT_QUERY_TYPES = ("lanInfo", "autoOperation")
+# The action each request is sent with, where it is not "query".
+RESIN_QUERY_ACTIONS = {"autoOperation": "getStatus"}

@@ -42,6 +42,10 @@ BUTTONS: tuple[AnycubicButtonEntityDescription, ...] = (
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
     coordinator: AnycubicCoordinator = entry.runtime_data
+    if coordinator.hs.resin:
+        # Pause, resume and stop are the Kobras' commands. None has been captured from a
+        # resin printer yet, and a guess sent to a printer mid-job is not something to ship.
+        return
     buttons: list[ButtonEntity] = [AnycubicButton(coordinator, d) for d in BUTTONS]
     if coordinator.hs.model_id in PRINT_MODELS:
         buttons += [AnycubicPrintAgainButton(coordinator), AnycubicBedClearButton(coordinator)]

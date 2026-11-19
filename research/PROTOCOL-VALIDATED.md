@@ -149,3 +149,59 @@ On-demand. **Start/stop are benign commands** (camera only; no print impact) —
 
 ## peripherie report
 `{camera, multiColorBox, udisk}` (1/0 presence flags) — peripheral inventory only, NOT environment data.
+
+## Resin: Photon P1 — VALIDATED on hardware (2026-11-18)
+
+> Captured live from a **Photon P1** (modelId **131**, `/info` deviceType **`lcd`**), firmware
+> **5.0.6.7**, and from **Photon Workshop 4.2.1**'s own MQTT log (`Log/cloud_mqtt.log` in its
+> install folder) on the same network. Read-only: queries only, no commands.
+
+**Handshake:** the same GET `/info` → signed POST `/ctrl` → AES-CBC as the Kobras. The decrypted
+answer differs:
+
+| Field | Kobra | Photon P1 |
+|-------|-------|-----------|
+| `broker` | `mqtts://host:9883` | `host:8883` (no scheme) |
+| `clientId` | — | `"clientId"` (literal) |
+| `username` / `password` | per session | `clientUser1` / a fixed value |
+| model id key | `modelId` | `modeId` (/info still says `modelId`) |
+| also | | `cacrt` (the broker's CA), `fileUploadUrl` (`:18910/upload/`), `rtsp` (`""`) |
+
+**Broker (port 8883, TLS, self-signed):**
+- **Client id must be the one `/ctrl` names.** A random id is refused CONNACK "not authorized".
+  One session under that id at a time, so Photon Workshop over LAN and any other client take it
+  from each other.
+- **Subscriptions:** `#`, `anycubic/#`, `printer/public/131/{dev}/#` and `printer/+/131/{dev}/#`
+  are all **refused** (SUBACK failure). Granted: `anycubic/anycubicCloud/v1/printer/+/131/{dev}/+/report`
+  (Workshop's own filter). Reports still arrive on `printer/public/...`.
+- **Requests:** publish `anycubic/anycubicCloud/v1/pc/printer/131/{dev}/{type}` (`pc`, not `web`),
+  body `{action, data: {}, msgid: <uuid>, timestamp, type}`. **`data` must be `{}`**: with
+  `data: null` the P1 answers nothing.
+
+| Request (`type` / `action`) | Answer topic | Answer |
+|---|---|---|
+| `status` / `query` | `status/report` | action `workReport`, `state` `free` or `busy`, `data: null` |
+| `print` / `query` | `status/report` (idle) | the same `status` answer |
+| `lanInfo` / `query` | `status/report` | `type: lanInfo`, `data: {printerName, version}` |
+| `light` / `query` | `light/report` | `data: {lights: [{type: 3, status: 0}]}` |
+| `autoOperation` / `getStatus` | `autoOperation/report` | action `reportStatus`, `data.currentStatus[]`: `{name, support, editable, status}` per smart feature (resinHeat, offLightCompensation, failDetection, camera_timelapse, dynamicRelease, autoTop, …) |
+| `video` / `query` | — | no answer |
+
+**Pushed by the printer during a job,** on `print/report`, with the phase as the envelope `state`:
+- `action: autoOperation`, `state: monitoring`, `code: 0` — the pre-print checks,
+  `data.checkStatus[]` `{name, status}`.
+- `action: start`, `state: preheating`, `code: 200` — `data` carries the Kobra progress keys
+  (`progress`, `curr_layer`, `total_layers`, `remain_time`, `print_time`, `filename`,
+  `supplies_usage` — **millilitres of resin**), plus `z_thick` (layer height), `model_hight`,
+  `heating_remain_time` (-1 when unknown), `heating_skip_allowed`, `settings` (exposure:
+  `on_time`, `bottom_time`, `bottom_layers`, lift heights and speeds) and `settings_adv`
+  (`trans_layers`, two-stage lift).
+- Meanwhile `status/report` says `busy`.
+
+**Workshop's print start** (from its log; not sent by this integration): `pc/printer/131/{dev}/print`,
+`{action: "start", data: {filename, filepath: "/", filesize, filetype: 1, md5: "", project_type: 1,
+task_mode: 1, task_settings: {autoTop, camera_timelapse, dynamicRelease, failDetection,
+offLightCompensation, platformOffsetComp, resinHeat}, taskid: ""}}`.
+
+**Not captured yet:** pause / resume / stop, light control, the camera, and the `print` report
+phases after `preheating` (expected: `printing`, `paused`, `finished`, `stoped`, by the Kobra names).

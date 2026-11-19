@@ -29,6 +29,8 @@ from .anycubic_local.const import (
     PAUSED_PHASES,
     QUERY_TYPES,
     REASON_TEXT,
+    RESIN_CONNECT_QUERY_TYPES,
+    RESIN_QUERY_TYPES,
     STATE_FREE,
     STOPPED_PHASES,
     query_topic,
@@ -47,6 +49,9 @@ from .anycubic_local.models import (
     PrinterState,
     apply_fan,
     apply_progress,
+    apply_resin_lan_info,
+    apply_resin_print,
+    apply_resin_status,
     apply_temperature,
     merge_boxes,
     merge_external_spool,
@@ -259,6 +264,11 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
                                   on_start_reply=self._on_start_reply)
         try:
             transport.connect()
+            if self.hs.resin:
+                # No ACE, spool holder or peripheral inventory on a resin printer.
+                for t in (*RESIN_QUERY_TYPES, *RESIN_CONNECT_QUERY_TYPES):
+                    transport.query(t)
+                return transport
             for t in (*QUERY_TYPES, *_CONNECT_ONLY_QUERY_TYPES):
                 transport.query(t)
             self._probe_extfilbox(transport)
@@ -352,7 +362,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
                 and time.monotonic() - self._last_report > STALE_AFTER)
 
     def _poll(self) -> None:
-        for t in QUERY_TYPES:
+        for t in RESIN_QUERY_TYPES if self.hs.resin else QUERY_TYPES:
             self._transport.query(t)
 
     async def async_shutdown(self) -> None:
@@ -646,7 +656,9 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             self._raise_bed_flag("report after a gap")
             self.clearing.async_on_gap()
         self._report_at = self._last_report
-        if msg_type == "info":
+        if self.hs.resin:
+            self._apply_resin(msg_type, data)
+        elif msg_type == "info":
             self.data.printer = parse_info(data)
             features = data.get("features")
             if isinstance(features, dict):
@@ -753,6 +765,33 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             self._recovery_warned_at = None
             for listener in list(self._session_listeners):
                 listener()
+
+    @callback
+    def _apply_resin(self, msg_type: str, report: dict) -> None:
+        """Apply a resin printer's report. `report` is the whole envelope (see mqtt._handle).
+
+        A resin printer has no `info`, so the job's status comes from `status` (free or busy)
+        and `print` (the phase), and turns into print events from there as a Kobra's does.
+        """
+        data = report.get("data")
+        if msg_type == "status":
+            apply_resin_status(self.data.printer, report)
+            self._track_status()
+        elif msg_type == "print":
+            if apply_resin_print(self.data.printer, report):
+                self._track_status()
+        elif msg_type == "lanInfo":
+            apply_resin_lan_info(self.data.printer, data)
+        elif msg_type == "autoOperation" and isinstance(data, dict):
+            # The smart-feature switches (resin heating, light-off compensation, …): kept
+            # for diagnostics, the same place a Kobra's `features` map goes.
+            self.raw_features = data
+        elif msg_type == "light" and isinstance(data, dict):
+            # The P1 lists one lamp, type 3. Read for diagnostics only: no light command
+            # has been captured from a resin printer, so no entity switches it.
+            light = parse_light(data, LIGHT_TYPE_CAMERA)
+            if light is not None:
+                self.data.camera_light = light
 
     @callback
     def async_notify_write(self) -> None:

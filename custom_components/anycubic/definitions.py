@@ -11,7 +11,14 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTemperature, UnitOfTime
+from homeassistant.const import (
+    PERCENTAGE,
+    EntityCategory,
+    UnitOfLength,
+    UnitOfTemperature,
+    UnitOfTime,
+    UnitOfVolume,
+)
 
 from .anycubic_local.models import AceBox, PrinterState, Slot, display_filename
 
@@ -20,6 +27,7 @@ from .anycubic_local.models import AceBox, PrinterState, Slot, display_filename
 class AnycubicSensorEntityDescription(SensorEntityDescription):
     value_fn: Callable[[PrinterState], object]
     enclosed_only: bool = False   # only create on enclosed printers (KS1 / KS1 Max)
+    fdm_only: bool = False        # a nozzle, a bed or a chamber: not on a resin printer
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -33,13 +41,16 @@ PRINTER_SENSORS: tuple[AnycubicSensorEntityDescription, ...] = (
     AnycubicSensorEntityDescription(key="status", translation_key="status", value_fn=lambda p: p.status),
     AnycubicSensorEntityDescription(key="nozzle_temperature", translation_key="nozzle_temperature",
         device_class=_T, native_unit_of_measurement=_C, suggested_unit_of_measurement=_C,
-        state_class=SensorStateClass.MEASUREMENT, value_fn=lambda p: p.nozzle_temp),
+        state_class=SensorStateClass.MEASUREMENT, value_fn=lambda p: p.nozzle_temp,
+        fdm_only=True),
     AnycubicSensorEntityDescription(key="bed_temperature", translation_key="bed_temperature",
         device_class=_T, native_unit_of_measurement=_C, suggested_unit_of_measurement=_C,
-        state_class=SensorStateClass.MEASUREMENT, value_fn=lambda p: p.bed_temp),
+        state_class=SensorStateClass.MEASUREMENT, value_fn=lambda p: p.bed_temp,
+        fdm_only=True),
     AnycubicSensorEntityDescription(key="chamber_temperature", translation_key="chamber_temperature",
         device_class=_T, native_unit_of_measurement=_C, suggested_unit_of_measurement=_C,
-        state_class=SensorStateClass.MEASUREMENT, value_fn=lambda p: p.chamber_temp, enclosed_only=True),
+        state_class=SensorStateClass.MEASUREMENT, value_fn=lambda p: p.chamber_temp, enclosed_only=True,
+        fdm_only=True),
     AnycubicSensorEntityDescription(key="progress", translation_key="progress",
         native_unit_of_measurement=PERCENTAGE, state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda p: p.progress),
@@ -59,6 +70,23 @@ PRINTER_SENSORS: tuple[AnycubicSensorEntityDescription, ...] = (
         value_fn=lambda p: display_filename(p.filename)),
     AnycubicSensorEntityDescription(key="firmware", translation_key="firmware", icon="mdi:chip",
         entity_category=EntityCategory.DIAGNOSTIC, value_fn=lambda p: p.firmware),
+)
+
+# Resin printers only (Photon P1). The job's resin is reported in millilitres, under the key a
+# Kobra uses for millimetres of filament (see PrinterState.filament_used).
+RESIN_SENSORS: tuple[AnycubicSensorEntityDescription, ...] = (
+    AnycubicSensorEntityDescription(key="resin_used", translation_key="resin_used",
+        icon="mdi:beaker-outline", device_class=SensorDeviceClass.VOLUME,
+        native_unit_of_measurement=UnitOfVolume.MILLILITERS, suggested_display_precision=1,
+        value_fn=lambda p: p.filament_used),
+    AnycubicSensorEntityDescription(key="layer_height", translation_key="layer_height",
+        icon="mdi:layers-outline", device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement=UnitOfLength.MILLIMETERS, suggested_display_precision=3,
+        value_fn=lambda p: p.layer_height),
+    AnycubicSensorEntityDescription(key="model_height", translation_key="model_height",
+        icon="mdi:arrow-expand-vertical", device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement=UnitOfLength.MILLIMETERS, suggested_display_precision=1,
+        entity_category=EntityCategory.DIAGNOSTIC, value_fn=lambda p: p.model_height),
 )
 
 PRINTER_BINARY_SENSORS: tuple[AnycubicBinaryEntityDescription, ...] = (

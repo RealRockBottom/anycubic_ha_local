@@ -68,6 +68,8 @@ MODEL_NAMES: dict[str, str] = {
     "20028": "Anycubic Kobra 4",
     "20029": "Anycubic Kobra S1 Max",
     "20030": "Anycubic Kobra X",
+    # Resin (deviceType "lcd"). Validated on hardware, firmware 5.0.6.7: status and progress.
+    "131": "Anycubic Photon P1",
 }
 
 # ACE multi-color box model_id (reported inside multiColorBox, not the printer's modelId).

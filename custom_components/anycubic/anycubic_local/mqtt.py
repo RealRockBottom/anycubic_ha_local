@@ -10,7 +10,13 @@ from collections.abc import Callable, Iterable
 
 import paho.mqtt.client as mqtt
 
-from .const import query_topic, redacted, report_prefix, runtime_identifiers
+from .const import (
+    RESIN_QUERY_ACTIONS,
+    query_topic,
+    redacted,
+    report_subscription,
+    runtime_identifiers,
+)
 from .handshake import HandshakeResult
 from .models import JobReason, parse_reason
 
@@ -49,6 +55,20 @@ def _new_client(factory, client_id: str):
     return factory(callback_api_version=versions.VERSION1, client_id=client_id)
 
 
+def _client_id(hs: HandshakeResult) -> str:
+    """The MQTT client id to connect with.
+
+    A resin printer's broker accepts only the id its /ctrl answer names; tested on a Photon
+    P1, a random one is refused "not authorized". That id is fixed ("clientId" on firmware
+    5.0.6.7), so the broker holds one session under it at a time: Photon Workshop connected
+    over LAN and Home Assistant take the session from each other. The Kobras keep a random id
+    of their own, as they always have.
+    """
+    if hs.resin and hs.client_id:
+        return hs.client_id
+    return f"ha-{uuid.uuid4().hex[:8]}"
+
+
 # Whether a failed TLS setup has been logged in this run (see AnycubicMqtt.__init__).
 _tls_failure_logged = False
 
@@ -80,7 +100,7 @@ class AnycubicMqtt:
         self._connected = False
         # Set while a disconnect is one we asked for, so that it is not reported as a loss.
         self._closing = False
-        self._c = _new_client(client_factory, f"ha-{uuid.uuid4().hex[:8]}")
+        self._c = _new_client(client_factory, _client_id(hs))
         self._c.username_pw_set(hs.username, hs.password)
         # Whether the client was given TLS. The session is TLS, and without it connect()
         # does not open one.
@@ -121,7 +141,8 @@ class AnycubicMqtt:
                 "credentials are probably stale", code)
             return
         self._connected = True
-        self._c.subscribe(f"{report_prefix(self._hs.model_id, self._hs.device_id)}/#")
+        self._c.subscribe(
+            report_subscription(self._hs.model_id, self._hs.device_id, self._hs.resin))
         # Port only. The host is the printer's LAN address, and this line is written on
         # every connect of every debug log a user shares.
         _LOGGER.debug("connected to the printer's broker on port %s, subscribed to reports",
@@ -162,12 +183,20 @@ class AnycubicMqtt:
             pass
 
     def query(self, msg_type: str) -> None:
-        # The ACE box only answers a "getInfo" request; everything else uses "query".
-        action = "getInfo" if msg_type == "multiColorBox" else "query"
+        resin = self._hs.resin
+        if resin:
+            # As Photon Workshop asks: `data` an empty object, never null, which the P1
+            # does not answer; a UUID msgid; and its own action for some types.
+            action = RESIN_QUERY_ACTIONS.get(msg_type, "query")
+            data, msgid = {}, str(uuid.uuid4())
+        else:
+            # The ACE box only answers a "getInfo" request; everything else uses "query".
+            action = "getInfo" if msg_type == "multiColorBox" else "query"
+            data, msgid = None, uuid.uuid4().hex
         body = json.dumps({"type": msg_type, "action": action,
                            "timestamp": int(time.time() * 1000),
-                           "msgid": uuid.uuid4().hex, "data": None})
-        self.publish(query_topic(self._hs.model_id, self._hs.device_id, msg_type), body)
+                           "msgid": msgid, "data": data})
+        self.publish(query_topic(self._hs.model_id, self._hs.device_id, msg_type, resin), body)
 
     def publish(self, topic: str, payload: str) -> None:
         # paho reports a send it could not make in the RETURN VALUE, not by raising.
@@ -232,6 +261,14 @@ class AnycubicMqtt:
             reason = parse_reason(obj)
             if reason is not None:
                 self._on_reason(reason)
+        if self._hs.resin:
+            # A resin printer says what it is doing in the envelope: a `status` report is
+            # "free" or "busy" with data null, and a `print` report's job phase is its
+            # `state`. Handing on `data` alone, as below, would lose both, so the coordinator
+            # is given the envelope (see AnycubicCoordinator._apply_resin).
+            self._on_report(msg_type, {key: obj.get(key)
+                                       for key in ("action", "state", "code", "msg", "data")})
+            return
         if (msg_type == "print" and obj.get("action") == "start"
                 and self._on_start_reply is not None):
             # The envelope only, in a copy: the code, the state and the message say whether

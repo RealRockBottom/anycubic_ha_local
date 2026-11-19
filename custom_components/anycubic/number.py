@@ -18,6 +18,8 @@ from .entity import AnycubicAceEntity, AnycubicEntity, async_setup_ace_entities
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
     coord: AnycubicCoordinator = entry.runtime_data
+    if coord.hs.resin:
+        return  # Nozzle, bed and fan setpoints, and ACE drying: none on a resin printer.
     enclosed = coord.hs.model_id in ENCLOSED_MODELS
     add([AnycubicNumber(coord, d) for d in PRINTER_NUMBERS if enclosed or not d.enclosed_only])
     async_setup_ace_entities(
