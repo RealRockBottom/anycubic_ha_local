@@ -240,6 +240,7 @@ def test_printing_and_paused_follow_the_phase():
 class FakeTransport:
     def __init__(self, hs, on_report, **k):
         self.on_report = on_report; self.queries = []; self.connected = False
+        self.taken_over = False
     def connect(self): self.connected = True
     def disconnect(self): self.connected = False
     def query(self, t): self.queries.append(t)
@@ -334,3 +335,67 @@ async def test_a_photon_p1_gets_resin_entities_and_no_kobra_hardware(hass):
     assert unexpected == set()
     assert not any(n.startswith(("button.", "number.", "select.", "switch.", "light.",
                                  "camera.")) for n in names)
+
+
+# ------------------------------------------- another client takes the session (Workshop)
+def test_a_resin_session_ended_by_the_printer_is_not_reconnected_by_paho():
+    """Tested on a P1: with paho reconnecting at once, Photon Workshop lost the session to
+    Home Assistant and could no longer start a print."""
+    client = m.AnycubicMqtt(HS, on_report=lambda t, d: None, client_factory=FakeClient)
+    client.connect()
+    stopped = []
+    client._c.disconnect = lambda: stopped.append(True)
+    client._c.on_disconnect(client._c, None, 7)
+    assert client.taken_over and not client.connected
+    assert stopped == [True], "paho was left to reconnect"
+
+
+def test_a_kobra_session_drop_still_reconnects_on_its_own():
+    kobra = HandshakeResult("1.2.3.4", 9883, "u", "p", "DEV", "20029", "SER")
+    client = m.AnycubicMqtt(kobra, on_report=lambda t, d: None, client_factory=FakeClient)
+    client.connect()
+    stopped = []
+    client._c.disconnect = lambda: stopped.append(True)
+    client._c.on_disconnect(client._c, None, 7)
+    assert not client.taken_over and stopped == []
+
+
+async def test_home_assistant_waits_while_another_client_has_the_printer(hass, monkeypatch):
+    import pytest
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    from custom_components.anycubic import coordinator as coord_mod
+
+    handshakes = []
+    monkeypatch.setattr(coord_mod, "do_handshake", lambda host: handshakes.append(host) or HS)
+    clock = [1000.0]
+    monkeypatch.setattr(coord_mod.time, "monotonic", lambda: clock[0])
+
+    coord = await _coordinator(hass)
+    coord._transport.connected, coord._transport.taken_over = False, True   # Workshop
+
+    with pytest.raises(UpdateFailed, match="5 min"):
+        await coord._async_update_data()
+    clock[0] += 200
+    with pytest.raises(UpdateFailed, match="2 min"):
+        await coord._async_update_data()
+    assert handshakes == [], "took the printer back while the other client had it"
+
+    clock[0] += 101                                   # the five minutes are up
+    await coord._async_update_data()
+    assert handshakes == ["1.2.3.4"] and coord._transport.connected
+
+    # Pushed off again a minute later: Workshop is still in use, so wait longer.
+    clock[0] += 60
+    coord._transport.connected, coord._transport.taken_over = False, True
+    with pytest.raises(UpdateFailed, match="15 min"):
+        await coord._async_update_data()
+
+    # A session that then lasts half an hour starts the back-off over.
+    clock[0] += 901
+    await coord._async_update_data()
+    clock[0] += coord_mod.RESIN_YIELD_RESET
+    coord._apply("status", _envelope(STATUS_FREE))
+    coord._transport.connected, coord._transport.taken_over = False, True
+    with pytest.raises(UpdateFailed, match="5 min"):
+        await coord._async_update_data()

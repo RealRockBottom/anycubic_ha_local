@@ -80,9 +80,11 @@ their commands has been captured from a P1, and the integration does not send gu
 printer. If you have a P1 and Photon Workshop, a capture of those commands is welcome in an issue.
 
 **One connection at a time.** The P1 lets in only one LAN client under the login it hands out,
-so Home Assistant and **Photon Workshop in LAN mode take the connection from each other.** While
-Workshop is connected, Home Assistant reconnects and the two keep swapping. Close Workshop's
-LAN connection when you are done with it.
+so Home Assistant and **Photon Workshop in LAN mode cannot both be connected.** When Workshop
+connects, Home Assistant steps aside: its P1 entities go unavailable and it tries again after 5
+minutes. If Workshop is still connected and takes the printer back, the wait grows to 15 and then
+30 minutes, so Workshop is not interrupted while you use it. Close Workshop when you are done and
+Home Assistant reconnects at its next try.
 
 ## Installation
 

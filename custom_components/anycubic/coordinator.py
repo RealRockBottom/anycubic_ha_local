@@ -115,6 +115,13 @@ MAX_RECOVERIES_BEFORE_UNAVAILABLE = 2
 # WARNING; after that one is repeated at that level this often, and the rest are DEBUG.
 RECOVERY_LOG_REMINDER = 3600.0
 
+# A resin printer lets one LAN client in at a time (see mqtt._client_id). When another one,
+# Photon Workshop, takes the session, Home Assistant stays off the printer this long before
+# trying again, and longer each time it is pushed off again soon after, so Workshop keeps the
+# printer while it is in use. A session held this long without being taken starts over.
+RESIN_YIELD_STEPS = (300.0, 900.0, 1800.0)
+RESIN_YIELD_RESET = 1800.0
+
 # Starting a print (async_start_print). The printer answers a start on the `print` topic, with
 # a code: 200 took it, 10101 says the previous task is still active. Every start is sent once
 # only, a busy answer included (see async_start_print for why). With no answer at all, a
@@ -215,6 +222,11 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         self._recovery_warned_at: float | None = None
         # Called when the printer answers again after a recovery (see _apply).
         self._session_listeners: list[Callable[[], None]] = []
+        # Resin printers: when the current session was opened, and the back-off while another
+        # client holds the printer (see _resin_yielding).
+        self._connected_at: float | None = None
+        self._yield_until: float | None = None
+        self._yield_step: int | None = None
         # Filename we have already asked fileDetails about, so one job asks once.
         self._file_details_asked: str | None = None
         # Told of print events (see async_add_event_listener).
@@ -294,7 +306,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         self._transport = await self.hass.async_add_executor_job(self._build_and_connect)
         # Start the silence clock at connect, so a printer that never answers at all
         # is caught by the same watchdog as one that goes quiet later.
-        self._last_report = time.monotonic()
+        self._last_report = self._connected_at = time.monotonic()
 
     def _rebuild(self):
         """Executor: drop the dead session, re-handshake, connect again.
@@ -350,12 +362,35 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
                 raise UpdateFailed(describe_failure(err, "reconnect")[1]) from err
             raise UpdateFailed(f"reconnect failed: {self._error_text(err)}") from err
         # Give the rebuilt session a full silence window before judging it again.
-        self._last_report = time.monotonic()
+        self._last_report = self._connected_at = time.monotonic()
         if self._recoveries > MAX_RECOVERIES_BEFORE_UNAVAILABLE:
             # Reconnecting keeps working but the printer never answers. Say so, rather
             # than serving values that stopped being true minutes ago.
             raise UpdateFailed(
                 f"reconnected {self._recoveries} times without a single report")
+
+    def _resin_yielding(self) -> float | None:
+        """Seconds left before trying a resin printer again; None when not holding back.
+
+        Another client taking the session (see mqtt._on_disconnect) starts a back-off of
+        RESIN_YIELD_STEPS[0]. Taken again within RESIN_YIELD_RESET of reconnecting, the next
+        step is used: Workshop is still open, and each attempt would cut its session.
+        Once the time is up, the ordinary recovery reconnects.
+        """
+        now = time.monotonic()
+        if self._yield_until is None:
+            if not getattr(self._transport, "taken_over", False):
+                return None
+            held = now - (self._connected_at or now)
+            if self._yield_step is None or held >= RESIN_YIELD_RESET:
+                self._yield_step = 0
+            else:
+                self._yield_step = min(self._yield_step + 1, len(RESIN_YIELD_STEPS) - 1)
+            self._yield_until = now + RESIN_YIELD_STEPS[self._yield_step]
+        if now < self._yield_until:
+            return self._yield_until - now
+        self._yield_until = None
+        return None
 
     def _silent(self) -> bool:
         return (self._last_report is not None
@@ -386,6 +421,14 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         if self._report_gap():
             self._raise_bed_flag("no report within the gap bound")
             self.clearing.async_on_gap()
+        if self.hs.resin:
+            wait = self._resin_yielding()
+            if wait is not None:
+                # Unavailable rather than showing what was true before Workshop took over.
+                # Home Assistant logs this once, when the entities go unavailable.
+                raise UpdateFailed(
+                    "another LAN client (Photon Workshop?) has the printer's only connection; "
+                    f"trying again in {max(1, round(wait / 60))} min")
         if self._transport is None:
             await self._async_recover("no transport")
         elif not getattr(self._transport, "connected", True):

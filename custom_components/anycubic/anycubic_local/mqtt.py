@@ -100,6 +100,8 @@ class AnycubicMqtt:
         self._connected = False
         # Set while a disconnect is one we asked for, so that it is not reported as a loss.
         self._closing = False
+        # A resin printer's session was ended by the printer (see _on_disconnect).
+        self._taken_over = False
         self._c = _new_client(client_factory, _client_id(hs))
         self._c.username_pw_set(hs.username, hs.password)
         # Whether the client was given TLS. The session is TLS, and without it connect()
@@ -155,11 +157,31 @@ class AnycubicMqtt:
             # warning below, on every reload, told users of a fault there was not.
             _LOGGER.debug("disconnected from the printer's broker, as asked")
             return
+        if self._hs.resin:
+            # A resin printer holds one session under its one client id (see _client_id), so
+            # a session ended by the printer is most often another client taking it: Photon
+            # Workshop connecting over LAN. Reconnecting at once takes it back, Workshop does
+            # the same, and neither can use the printer; tested on a P1, Workshop could no
+            # longer start a print. So paho is told not to reconnect, and the coordinator
+            # decides when to try again (see AnycubicCoordinator._resin_yielding).
+            self._taken_over = True
+            _LOGGER.debug("the printer ended the session; not reconnecting on our own")
+            try:
+                # On paho's network thread: this ends its reconnect loop.
+                self._c.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+            return
         _LOGGER.warning("printer broker connection lost; paho will auto-reconnect")
 
     @property
     def connected(self) -> bool:
         return self._connected
+
+    @property
+    def taken_over(self) -> bool:
+        """Did a resin printer end this session, which is then left closed?"""
+        return self._taken_over
 
     def connect(self) -> None:
         if not self._tls_ready:
