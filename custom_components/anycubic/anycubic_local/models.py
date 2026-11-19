@@ -310,6 +310,8 @@ _RESIN_JOB_FIELDS = {
     "layer_height": "z_thick",
     "model_height": "model_hight",
 }
+# The `print` report action of the pre-print checks (state "monitoring").
+_RESIN_CHECKS = "autoOperation"
 # A job is over in these phases; a later `status` "busy" does not make it a job again.
 _RESIN_ENDED = STOPPED_PHASES | {"finished", "idle"}
 
@@ -350,6 +352,13 @@ def apply_resin_print(state: PrinterState, report: dict) -> bool:
             state.preheat_remaining = heating if heating >= 0 else None
     phase = report.get("state")
     if not isinstance(phase, str) or not phase:
+        return False
+    if (report.get("action") == _RESIN_CHECKS and state.status in JOB_PHASES
+            and state.status != phase):
+        # The pre-print checks keep reporting after the job has moved on: on a P1 a
+        # "monitoring" check report arrives in the same second as, and after, the start's
+        # "preheating". It says how the checks went, not where the job is, so it only sets
+        # the phase of a job not yet under way.
         return False
     state.status = phase
     if phase in JOB_PHASES:

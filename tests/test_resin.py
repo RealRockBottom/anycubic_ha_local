@@ -28,7 +28,11 @@ from custom_components.anycubic.anycubic_local.const import (
     report_subscription,
 )
 from custom_components.anycubic.anycubic_local.handshake import HandshakeResult
-from custom_components.anycubic.anycubic_local.models import PrinterState, apply_resin_print
+from custom_components.anycubic.anycubic_local.models import (
+    PrinterState,
+    apply_resin_print,
+    apply_resin_status,
+)
 from custom_components.anycubic.const import DOMAIN, MODEL_NAMES
 from custom_components.anycubic.coordinator import AnycubicCoordinator
 
@@ -211,6 +215,19 @@ def test_the_pre_print_checks_are_a_phase_with_no_progress():
     assert state.status == "monitoring" and state.progress is None
 
 
+def test_a_late_check_report_does_not_take_the_job_back_to_monitoring():
+    """Seen live on a P1: monitoring, preheating, then monitoring again in the same second."""
+    state = PrinterState()
+    apply_resin_print(state, _envelope(PRINT_MONITORING))
+    apply_resin_print(state, _envelope(PRINT_PREHEATING))
+    assert not apply_resin_print(state, _envelope(PRINT_MONITORING))
+    assert state.status == "preheating"
+    # A new job's checks, after the last one ended, are its phase again.
+    apply_resin_status(state, STATUS_FREE)
+    apply_resin_print(state, _envelope(PRINT_MONITORING))
+    assert state.status == "monitoring"
+
+
 def test_printing_and_paused_follow_the_phase():
     state = PrinterState()
     apply_resin_print(state, {"state": "printing", "data": {"progress": 40, "curr_layer": 120}})
@@ -263,6 +280,7 @@ async def test_a_resin_job_from_start_to_finish(hass):
     _report(coord, PRINT_MONITORING)
     _report(coord, STATUS_BUSY)          # busy says less than the phase: the phase stays
     _report(coord, PRINT_PREHEATING)
+    _report(coord, PRINT_MONITORING)     # a late check report, as the P1 sends one
     await hass.async_block_till_done()
     assert printer.status == "preheating" and printer.total_layers == 304
     assert events == ["started"]
