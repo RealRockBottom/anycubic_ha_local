@@ -303,6 +303,9 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
                 "msgid": uuid.uuid4().hex, "data": None}))
 
     async def async_start(self) -> None:
+        if self.lan_released:
+            # Switched off before a restart: stay off the printer until switched on.
+            return
         self._transport = await self.hass.async_add_executor_job(self._build_and_connect)
         # Start the silence clock at connect, so a printer that never answers at all
         # is caught by the same watchdog as one that goes quiet later.
@@ -369,6 +372,35 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             raise UpdateFailed(
                 f"reconnected {self._recoveries} times without a single report")
 
+    @property
+    def lan_released(self) -> bool:
+        """Has the user switched the LAN connection off (a resin printer only)?"""
+        return self.hs.resin and self.print_state.lan_released
+
+    async def async_set_lan_connected(self, connected: bool) -> None:
+        """Switch the LAN connection to a resin printer off or back on.
+
+        The P1 lets one LAN client in at a time (see mqtt._client_id), so Home Assistant
+        and Photon Workshop take turns. Off closes the session and keeps it closed, across
+        a restart too; on opens a new one at once, with a new handshake, and forgets any
+        back-off from Workshop having taken the session before.
+        """
+        self.print_state.lan_released = not connected
+        await self.async_save_print_state()
+        self._yield_until = self._yield_step = None
+        transport, self._transport = self._transport, None
+        if transport is not None:
+            await self.hass.async_add_executor_job(transport.disconnect)
+        if connected:
+            try:
+                # _rebuild sets self._transport itself.
+                await self.hass.async_add_executor_job(self._rebuild)
+            except Exception:  # noqa: BLE001
+                # Left to the ordinary recovery, which retries on every poll and says why.
+                _LOGGER.debug("reconnect after switching on failed; recovery will retry")
+            self._last_report = self._connected_at = time.monotonic()
+        await self.async_refresh()
+
     def _resin_yielding(self) -> float | None:
         """Seconds left before trying a resin printer again; None when not holding back.
 
@@ -421,6 +453,10 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         if self._report_gap():
             self._raise_bed_flag("no report within the gap bound")
             self.clearing.async_on_gap()
+        if self.lan_released:
+            # Unavailable, as while Workshop has taken the session (below). The switch
+            # itself stays available (see AnycubicLanConnectionSwitch).
+            raise UpdateFailed("the LAN connection is switched off in Home Assistant")
         if self.hs.resin:
             wait = self._resin_yielding()
             if wait is not None:

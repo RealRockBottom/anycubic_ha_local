@@ -93,7 +93,8 @@
     },
     "switch": {
       "ace_drying": { "name": "Drying" },
-      "ace_auto_feed": { "name": "Auto-feed" }
+      "ace_auto_feed": { "name": "Auto-feed" },
+      "lan_connection": { "name": "LAN connection" }
     },
     "button": {
       "pause": { "name": "Pause" },

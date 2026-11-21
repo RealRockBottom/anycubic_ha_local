@@ -71,7 +71,8 @@ The Photon P1 speaks the same LAN handshake on a broker of its own (port 8883). 
   name, Resin used (ml), Layer height, Model height, Firmware, Pause reason.
 - **Binary sensors and events:** Printing, Paused, and the Print event entity (started,
   paused, resumed, finished, stopped).
-- **Controls:** Pause and Resume buttons, and the Camera light.
+- **Controls:** Pause and Resume buttons, the Camera light, and a **LAN connection** switch
+  (see below).
 - **Camera:** the P1's live view, the same stream Photon Workshop shows.
 
 The status shows the P1's own phases: *Idle*, *monitoring* (its checks before the first layer),
@@ -87,9 +88,14 @@ so Home Assistant and **Photon Workshop in LAN mode cannot both be connected.** 
 connects, Home Assistant steps aside: its P1 entities go unavailable and it tries again after 5
 minutes. If Workshop is still connected and takes the printer back, the wait grows to 15 and then
 30 minutes, so Workshop is not interrupted while you use it. Close Workshop when you are done and
-Home Assistant reconnects at its next try. For a long session in Workshop, disable the entry in
-Home Assistant (Settings → Devices & services) and enable it again after: its first retry, 5
-minutes in, can still cut Workshop off for a moment.
+Home Assistant reconnects at its next try.
+
+For a longer session in Workshop, switch **LAN connection** off on the P1's device page first.
+Home Assistant then lets go of the printer and stays off it, across a restart too, until you
+switch it back on, which reconnects at once. Its other entities are unavailable in between.
+That can be automated: with HASS.Agent on the PC reporting whether
+Photon Workshop is running, an automation can switch it off when Workshop opens and back on
+when it closes.
 
 ## Installation
 

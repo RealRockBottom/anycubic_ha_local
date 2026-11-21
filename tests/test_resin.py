@@ -340,7 +340,8 @@ async def test_a_photon_p1_gets_resin_entities_and_no_kobra_hardware(hass):
     unexpected = {n for n in names if p1 in n and any(word in n for word in (
         "nozzle", "bed", "chamber", "filament", "ace", "slot", "fan", "speed", "stop"))}
     assert unexpected == set()
-    assert not any(n.startswith(("number.", "select.", "switch.")) for n in names)
+    assert {n for n in names if n.startswith("switch.")} == {f"switch.{p1}_lan_connection"}
+    assert not any(n.startswith(("number.", "select.")) for n in names)
 
 
 # -------------------------------------------------------------------------- commands
@@ -467,3 +468,71 @@ async def test_home_assistant_waits_while_another_client_has_the_printer(hass, m
     coord._transport.connected, coord._transport.taken_over = False, True
     with pytest.raises(UpdateFailed, match="5 min"):
         await coord._async_update_data()
+
+
+# ------------------------------------------- the LAN connection switch (hand over to Workshop)
+async def test_switching_the_lan_connection_off_and_on(hass, monkeypatch):
+    import pytest
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    from custom_components.anycubic import coordinator as coord_mod
+
+    handshakes = []
+    monkeypatch.setattr(coord_mod, "do_handshake", lambda host: handshakes.append(host) or HS)
+    coord = await _coordinator(hass)
+    first = coord._transport
+    assert first.connected and not coord.lan_released
+
+    await coord.async_set_lan_connected(False)
+    assert coord.lan_released and coord.print_state.lan_released
+    assert coord._transport is None and not first.connected      # the printer is free
+    with pytest.raises(UpdateFailed, match="switched off"):
+        await coord._async_update_data()
+    assert handshakes == [], "reconnected while switched off"
+
+    await coord.async_set_lan_connected(True)
+    assert not coord.lan_released and handshakes == ["1.2.3.4"]
+    assert coord._transport is not None and coord._transport.connected
+
+
+async def test_switching_on_forgets_the_workshop_back_off(hass, monkeypatch):
+    from custom_components.anycubic import coordinator as coord_mod
+
+    monkeypatch.setattr(coord_mod, "do_handshake", lambda host: HS)
+    coord = await _coordinator(hass)
+    coord._yield_until, coord._yield_step = 10**12, 2
+    await coord.async_set_lan_connected(True)
+    assert coord._yield_until is None and coord._yield_step is None
+
+
+async def test_switched_off_stays_off_across_a_restart(hass):
+    from custom_components.anycubic.store import PrintState
+
+    stored = PrintState(lan_released=True).as_dict()
+    assert PrintState.from_dict(stored).lan_released
+    assert not PrintState.from_dict({}).lan_released           # files from before: on
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    coord.print_state = PrintState.from_dict(stored)
+    await coord.async_start()
+    assert coord._transport is None, "took the printer at startup while switched off"
+
+
+async def test_the_switch_stays_available_while_the_printer_is_released(hass):
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-P1", data={"host": "1.2.3.4"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        switch = "switch.anycubic_photon_p1_lan_connection"
+        assert hass.states.get(switch).state == "on"
+
+        await hass.services.async_call("switch", "turn_off", {"entity_id": switch}, blocking=True)
+        await hass.async_block_till_done()
+        assert hass.states.get(switch).state == "off"
+        assert hass.states.get("sensor.anycubic_photon_p1_status").state == "unavailable"
+
+        await hass.services.async_call("switch", "turn_on", {"entity_id": switch}, blocking=True)
+        await hass.async_block_till_done()
+        assert hass.states.get(switch).state == "on"

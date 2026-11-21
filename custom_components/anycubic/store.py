@@ -155,10 +155,18 @@ class PrintState:
     last_file: LastFile | None = None
     # The prepared print whose end Home Assistant is waiting for, if there is one.
     armed: ArmedJob | None = None
+    # A resin printer's LAN connection switched off in Home Assistant, to leave the printer
+    # to Photon Workshop (see AnycubicCoordinator.async_set_lan_connected). Kept across a
+    # restart, so Home Assistant coming back up does not take the printer from Workshop.
+    lan_released: bool = False
 
     def as_dict(self) -> dict:
-        return {"last_file": None if self.last_file is None else self.last_file.as_dict(),
+        data = {"last_file": None if self.last_file is None else self.last_file.as_dict(),
                 "armed": None if self.armed is None else self.armed.as_dict()}
+        if self.lan_released:
+            # Written only when set, so a printer that never uses it keeps the same file.
+            data["lan_released"] = True
+        return data
 
     @classmethod
     def from_dict(cls, data) -> PrintState:
@@ -166,7 +174,8 @@ class PrintState:
         last_file = data.get("last_file") if isinstance(data, dict) else None
         armed = data.get("armed") if isinstance(data, dict) else None
         return cls(last_file=None if last_file is None else LastFile.from_dict(last_file),
-                   armed=None if armed is None else ArmedJob.from_dict(armed))
+                   armed=None if armed is None else ArmedJob.from_dict(armed),
+                   lan_released=isinstance(data, dict) and data.get("lan_released") is True)
 
 
 class PrintStore:
