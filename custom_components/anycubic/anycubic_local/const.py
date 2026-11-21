@@ -345,8 +345,12 @@ STATE_BUSY = "busy"
 REASON_PAUSED_BY_USER = 10401
 REASON_STOPPED_BY_USER = 10601
 REASON_FILAMENT_STUCK = 11518
+# A resin printer's pause (Photon P1): the code of every pause seen, from its own screen or
+# from Photon Workshop, and of the PrintError it files with it. Its resume answers 501.
+REASON_RESIN_PAUSED_BY_USER = 401
 REASON_TEXT = {
     REASON_PAUSED_BY_USER: "Paused by user",
+    REASON_RESIN_PAUSED_BY_USER: "Paused by user",
     REASON_STOPPED_BY_USER: "Stopped by user",
     REASON_FILAMENT_STUCK: "Filament is stuck",
     # The rest are Anycubic's own Kobra 3 error codes, from the titles of its wiki pages
@@ -403,7 +407,8 @@ REASON_TEXT = {
     11900: "Nozzle diameter does not match the model",
 }
 # From the slicer, the app or the printer's screen: not a fault.
-USER_REASONS = frozenset({REASON_PAUSED_BY_USER, REASON_STOPPED_BY_USER})
+USER_REASONS = frozenset({REASON_PAUSED_BY_USER, REASON_STOPPED_BY_USER,
+                          REASON_RESIN_PAUSED_BY_USER})
 # project.state values for a paused and a stopped job. "stoped" is the wire spelling.
 PAUSED_PHASES = frozenset({"pausing", "paused"})
 STOPPED_PHASES = frozenset({"stopping", "stoped", "stopped"})

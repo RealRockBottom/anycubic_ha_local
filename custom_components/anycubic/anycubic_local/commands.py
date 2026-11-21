@@ -10,6 +10,11 @@ from .const import LIGHT_TYPE_CAMERA, LIGHT_TYPE_CHAMBER, query_topic
 
 _TASKID = "-1"
 
+# Resin printers (Photon P1): the commands Photon Workshop 4.2.1 sends, from its own MQTT log,
+# each answered by a P1 on firmware 5.0.6.7. `taskid` is "" (the Kobras: "-1"), the camera
+# light takes no brightness, and every body carries a `data` object, never null.
+RESIN_COMMANDS = frozenset({"pause", "resume", "camera_light", "camera_start", "camera_stop"})
+
 
 def _box(payload: dict, box_id: int = 0) -> dict:
     return {"multi_color_box": [{"id": box_id, **payload}]}
@@ -17,7 +22,7 @@ def _box(payload: dict, box_id: int = 0) -> dict:
 
 def build(model_id: str, device_id: str, command: str, *, value=None, on=None,
           brightness=None, target_temp=None, duration=None, box_id: int = 0,
-          filename=None, ts=None, msgid=None):
+          filename=None, ts=None, msgid=None, resin: bool = False):
     """Return (topic, payload_dict) for a control command.
 
     ts/msgid default to a real epoch-ms clock and a fresh uuid; they are parameters only
@@ -25,6 +30,8 @@ def build(model_id: str, device_id: str, command: str, *, value=None, on=None,
     the caller/transport" — but nothing ever injected them, so every control command went
     out with timestamp 0 while queries carried a real clock (issue #10).
     """
+    if resin:
+        return _build_resin(model_id, device_id, command, on=on, ts=ts, msgid=msgid)
     if command in ("pause", "resume", "stop"):
         mtype, action, data = "print", command, {"taskid": _TASKID}
     elif command in ("set_nozzle_temp", "set_bed_temp", "set_fan_speed", "set_aux_fan",
@@ -66,6 +73,30 @@ def build(model_id: str, device_id: str, command: str, *, value=None, on=None,
                "timestamp": int(time.time() * 1000) if ts is None else ts,
                "msgid": msgid or str(uuid.uuid4()), "data": data}
     return query_topic(model_id, device_id, mtype), payload
+
+
+def _build_resin(model_id: str, device_id: str, command: str, *, on=None, ts=None,
+                 msgid=None):
+    """Return (topic, payload) for a resin printer's command; see RESIN_COMMANDS.
+
+    Only what has been captured is built. Stop has not been: the Kobras' stop is "-1" where
+    the P1's pause and resume are "", so it is not assumed.
+    """
+    if command in ("pause", "resume"):
+        # Pause: pausing -> paused (code 401) once the layer ends. Resume: resuming ->
+        # printing -> resumed (code 501).
+        mtype, action, data = "print", command, {"taskid": ""}
+    elif command == "camera_light":
+        mtype, action, data = "light", "control", {"status": 1 if on else 0, "type": LIGHT_TYPE_CAMERA}
+    elif command == "camera_start":
+        mtype, action, data = "video", "startCapture", {}
+    elif command == "camera_stop":
+        mtype, action, data = "video", "stopCapture", {}
+    else:
+        raise ValueError(f"not a command a resin printer has been seen to take: {command}")
+    payload = {"action": action, "data": data, "msgid": msgid or str(uuid.uuid4()),
+               "timestamp": int(time.time() * 1000) if ts is None else ts, "type": mtype}
+    return query_topic(model_id, device_id, mtype, resin=True), payload
 
 
 # `filetype` in a print start. 1 is what every start seen so far has sent, for G-code; it is

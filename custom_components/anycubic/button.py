@@ -12,6 +12,7 @@ from homeassistant.exceptions import ServiceValidationError, Unauthorized, Unkno
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .actions import async_clear_bed, async_print_again
+from .anycubic_local.commands import RESIN_COMMANDS
 from .anycubic_local.const import JOB_PHASES
 from .anycubic_local.models import PrinterState
 from .const import DOMAIN, PRINT_MODELS, PUSH_ENABLED, PUSH_OFF_MODELS
@@ -43,8 +44,9 @@ BUTTONS: tuple[AnycubicButtonEntityDescription, ...] = (
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
     coordinator: AnycubicCoordinator = entry.runtime_data
     if coordinator.hs.resin:
-        # Pause, resume and stop are the Kobras' commands. None has been captured from a
-        # resin printer yet, and a guess sent to a printer mid-job is not something to ship.
+        # Pause and resume, as captured from Photon Workshop on a P1. Not stop: that one
+        # has not been captured yet, and a guess sent to a printer mid-job is not shipped.
+        add([AnycubicButton(coordinator, d) for d in BUTTONS if d.command in RESIN_COMMANDS])
         return
     buttons: list[ButtonEntity] = [AnycubicButton(coordinator, d) for d in BUTTONS]
     if coordinator.hs.model_id in PRINT_MODELS:

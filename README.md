@@ -71,20 +71,25 @@ The Photon P1 speaks the same LAN handshake on a broker of its own (port 8883). 
   name, Resin used (ml), Layer height, Model height, Firmware, Pause reason.
 - **Binary sensors and events:** Printing, Paused, and the Print event entity (started,
   paused, resumed, finished, stopped).
+- **Controls:** Pause and Resume buttons, and the Camera light.
+- **Camera:** the P1's live view, the same stream Photon Workshop shows.
 
 The status shows the P1's own phases: *Idle*, *monitoring* (its checks before the first layer),
 *preheating* (resin heating), *printing*, and so on.
 
-Not yet: pause, resume and stop, the LED, the camera, and printing from Home Assistant. None of
-their commands has been captured from a P1, and the integration does not send guesses to a
-printer. If you have a P1 and Photon Workshop, a capture of those commands is welcome in an issue.
+Not yet: Stop, and printing from Home Assistant. Their commands have not been captured from a
+P1, and the integration does not send guesses to a printer. If you have a P1 and Photon Workshop,
+a capture is welcome in an issue: Workshop logs every command it sends in `Log/cloud_mqtt.log`
+in its install folder.
 
 **One connection at a time.** The P1 lets in only one LAN client under the login it hands out,
 so Home Assistant and **Photon Workshop in LAN mode cannot both be connected.** When Workshop
 connects, Home Assistant steps aside: its P1 entities go unavailable and it tries again after 5
 minutes. If Workshop is still connected and takes the printer back, the wait grows to 15 and then
 30 minutes, so Workshop is not interrupted while you use it. Close Workshop when you are done and
-Home Assistant reconnects at its next try.
+Home Assistant reconnects at its next try. For a long session in Workshop, disable the entry in
+Home Assistant (Settings → Devices & services) and enable it again after: its first retry, 5
+minutes in, can still cut Workshop off for a moment.
 
 ## Installation
 

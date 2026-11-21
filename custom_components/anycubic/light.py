@@ -17,6 +17,11 @@ from .entity import AnycubicEntity
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
     # The chamber light is enclosure hardware (KS1 / KS1 Max only).
     coord: AnycubicCoordinator = entry.runtime_data
+    if coord.hs.resin:
+        # The P1's one lamp, type 3, the light for its camera; switched as Photon Workshop
+        # does. Its peripherie answer always lists the camera, so it is not waited for.
+        add([AnycubicCameraLight(coord)])
+        return
     if coord.hs.model_id in ENCLOSED_MODELS:
         add([AnycubicLight(coord)])
     if coord.hs.model_id in CAMERA_LIGHT_MODELS:

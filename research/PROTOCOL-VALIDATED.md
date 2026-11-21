@@ -203,5 +203,33 @@ answer differs:
 task_mode: 1, task_settings: {autoTop, camera_timelapse, dynamicRelease, failDetection,
 offLightCompensation, platformOffsetComp, resinHeat}, taskid: ""}}`.
 
-**Not captured yet:** pause / resume / stop, light control, the camera, and the `print` report
-phases after `preheating` (expected: `printing`, `paused`, `finished`, `stoped`, by the Kobra names).
+### Commands (captured 2026-11-19 from Photon Workshop's log, all answered by the P1)
+
+All published to `anycubic/anycubicCloud/v1/pc/printer/131/{dev}/{type}`, body
+`{action, data, msgid: <uuid>, timestamp, type}`:
+
+| Command | `type` / `action` | `data` | Printer's answer |
+|---|---|---|---|
+| Pause | `print` / `pause` | `{"taskid": ""}` | `print/report` action `pause`: `pausing` then `paused` once the layer ends (~35 s), **code 401**; plus `buried/report` `PrintError` `error_code: 401`. A pause from the printer's own screen reports the same. |
+| Resume | `print` / `resume` | `{"taskid": ""}` | `resuming` (code 501), then `start`-action reports `preheating` → `printing`, then `resumed` (code 501), ~7 s. |
+| Light | `light` / `control` | `{"status": 1\|0, "type": 3}` | `light/report` action `control`, `state: done`, `data: {type: 3, status}` |
+| Camera on | `video` / `startCapture` | `{}` | `video/report` `state: initSuccess`, `msg: "LanStream start success"`, `data: null` |
+| Camera off | `video` / `stopCapture` | `{}` | `done` ("LanStream push ended", "LanStream stop success"), then `initSuccess` code 1404 |
+
+Workshop also sends `properties` / `read` with `data` a list of names (`["resin_temp"]`,
+`["total_space","free_space"]`, `["connect","signal_strength","times","layers"]`); no answer was
+logged on the `/report` topics. `peripherie` / `query` answers `{"camera":1,"udisk":0,
+"smartResinVat":1,"airpure":0}`.
+
+**Camera stream:** `http://<printer>:18088/flv`, as on the Kobra S1. The port is open before and
+after `startCapture`; the path is an endless HTTP-FLV response (`Content-Length: 99999999999`)
+while capture runs. Every other path on the port answers `ok`. Port 11311 does not speak HTTP.
+
+**Job phases seen:** `monitoring` → `preheating` → `printing` → `finished` (with `buried/report`
+`PrintFinish`, `finish_type: success`). While printing, `print/report` (action `start`, state
+`printing`) is pushed every 1–1.5 min. `remain_time` and `print_time` are minutes: 193 at the
+start of a job Workshop estimated at 3 h 8 min.
+
+**Not captured yet:** Stop (by the Kobras' shape `{"taskid": "-1"}`, but the P1's pause and
+resume take `""`), and the print start from Home Assistant (Workshop's start is above, but it
+needs the file on the printer first).

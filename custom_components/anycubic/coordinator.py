@@ -655,7 +655,8 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         if self._transport is None:
             _LOGGER.debug("dropping command %s: no transport", command)
             return
-        topic, payload = build_command(self.hs.model_id, self.hs.device_id, command, **kwargs)
+        topic, payload = build_command(self.hs.model_id, self.hs.device_id, command,
+                                       resin=self.hs.resin, **kwargs)
         await self._async_publish(command, topic, payload)
 
     async def _async_publish(self, command: str, topic: str, payload: dict) -> None:
@@ -830,11 +831,16 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             # for diagnostics, the same place a Kobra's `features` map goes.
             self.raw_features = data
         elif msg_type == "light" and isinstance(data, dict):
-            # The P1 lists one lamp, type 3. Read for diagnostics only: no light command
-            # has been captured from a resin printer, so no entity switches it.
+            # The P1's one lamp, type 3: the answer to a query or to a switch.
             light = parse_light(data, LIGHT_TYPE_CAMERA)
             if light is not None:
                 self.data.camera_light = light
+        elif msg_type == "video":
+            # startCapture is answered "LanStream start success" with no URL: the stream is
+            # always :18088/flv (see camera._stream_url). Only the start's answer ends the
+            # wait in async_start_capture; the stop's answer comes too and must not.
+            if report.get("action") == "startCapture" and self._video_report is not None:
+                self._video_report.set()
 
     @callback
     def async_notify_write(self) -> None:

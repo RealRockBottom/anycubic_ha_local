@@ -84,15 +84,18 @@ ACE_MODEL_NAMES: dict[str, str] = {
 ENCLOSED_MODELS: frozenset[str] = frozenset({"20025", "20029"})
 # Models with a camera light (light type 3), shown only when peripherie reports a camera.
 # Kobra 4 (issue #17), confirmed from a user capture.
-CAMERA_LIGHT_MODELS: frozenset[str] = frozenset({"20028"})
+# Photon P1 (131): its one lamp, also type 3, switched by Photon Workshop from its camera view.
+CAMERA_LIGHT_MODELS: frozenset[str] = frozenset({"20028", "131"})
 
 # Models with a camera at :18088 (built-in on enclosed and on the Kobra 4 / X, add-on on the
 # Kobra 3 family); Kobra 2 has no camera. Kobra 4 (issue #6) and Kobra X (issue #8) both confirmed
 # from user diagnostics — peripherie camera=1 plus a stream URL in the info report. The
 # new-generation models serve a tokenized path (/live/<token>) instead of /flv; camera.py follows
 # whatever URL the printer reports, so no per-model handling is needed here.
+# The Photon P1 (131) serves it at the S1 family's :18088/flv once startCapture is sent,
+# found on a P1 on firmware 5.0.6.7: the port listens before and after, the path streams.
 CAMERA_MODELS: frozenset[str] = frozenset(
-    {"20024", "20025", "20026", "20027", "20028", "20029", "20030"})
+    {"20024", "20025", "20026", "20027", "20028", "20029", "20030", "131"})
 
 # Printers whose multi-material changer is built into the toolhead (Anycubic's "ACE Gen 2" on the
 # Kobra X) rather than an attached box. They report it as box id -1 with head_tools_model 1, where

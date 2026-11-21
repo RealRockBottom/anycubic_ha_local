@@ -12,6 +12,7 @@ does differently from the Kobras, all of it confirmed on that printer:
 - There is no `info` report: `status` says free or busy (data null) and `print` carries the
   job's phase in its envelope `state`, with the same progress keys a Kobra uses.
 """
+import asyncio
 import base64
 import json
 from unittest.mock import patch
@@ -21,6 +22,7 @@ from cryptography.hazmat.primitives.padding import PKCS7
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.anycubic.anycubic_local import handshake, mqtt as m
+from custom_components.anycubic.anycubic_local.commands import build as build_command
 from custom_components.anycubic.anycubic_local.const import (
     RESIN_CONNECT_QUERY_TYPES,
     RESIN_QUERY_TYPES,
@@ -32,6 +34,7 @@ from custom_components.anycubic.anycubic_local.models import (
     PrinterState,
     apply_resin_print,
     apply_resin_status,
+    parse_reason,
 )
 from custom_components.anycubic.const import DOMAIN, MODEL_NAMES
 from custom_components.anycubic.coordinator import AnycubicCoordinator
@@ -328,13 +331,78 @@ async def test_a_photon_p1_gets_resin_entities_and_no_kobra_hardware(hass):
         assert f"sensor.{p1}_{sensor}" in names, sensor
     assert f"binary_sensor.{p1}_printing" in names
     assert f"event.{p1}_print_event" in names
-    # Nothing a resin printer does not have, and no commands nobody has captured from one.
+    # What was captured from Photon Workshop on a P1, and nothing else.
+    assert {n for n in names if n.startswith("button.")} == {
+        f"button.{p1}_pause", f"button.{p1}_resume"}
+    assert {n for n in names if n.startswith("light.")} == {f"light.{p1}_camera_light"}
+    assert f"camera.{p1}_camera" in names
+    # Nothing a resin printer does not have.
     unexpected = {n for n in names if p1 in n and any(word in n for word in (
-        "nozzle", "bed", "chamber", "filament", "ace", "slot", "fan", "speed", "camera",
-        "light", "pause_button", "resume", "stop"))}
+        "nozzle", "bed", "chamber", "filament", "ace", "slot", "fan", "speed", "stop"))}
     assert unexpected == set()
-    assert not any(n.startswith(("button.", "number.", "select.", "switch.", "light.",
-                                 "camera.")) for n in names)
+    assert not any(n.startswith(("number.", "select.", "switch.")) for n in names)
+
+
+# -------------------------------------------------------------------------- commands
+def test_pause_and_resume_are_sent_as_photon_workshop_sends_them():
+    """From Workshop 4.2.1's log, as a P1 answered them (pausing/paused, resuming/resumed)."""
+    for command in ("pause", "resume"):
+        topic, body = build_command("131", "DEV", command, resin=True, ts=1, msgid="m")
+        assert topic == f"{PREFIX}/pc/printer/131/DEV/print"
+        assert body == {"action": command, "data": {"taskid": ""}, "msgid": "m",
+                        "timestamp": 1, "type": "print"}
+
+
+def test_the_light_and_the_camera_are_sent_as_photon_workshop_sends_them():
+    topic, body = build_command("131", "DEV", "camera_light", on=True, resin=True)
+    assert topic == f"{PREFIX}/pc/printer/131/DEV/light"
+    assert body["action"] == "control" and body["data"] == {"status": 1, "type": 3}
+    _, off = build_command("131", "DEV", "camera_light", on=False, resin=True)
+    assert off["data"] == {"status": 0, "type": 3}
+    for command, action in (("camera_start", "startCapture"), ("camera_stop", "stopCapture")):
+        topic, body = build_command("131", "DEV", command, resin=True)
+        assert topic == f"{PREFIX}/pc/printer/131/DEV/video"
+        assert body["action"] == action and body["data"] == {}
+
+
+def test_nothing_uncaptured_is_built_for_a_resin_printer():
+    import pytest
+    for command in ("stop", "set_nozzle_temp", "light", "drying_start"):
+        with pytest.raises(ValueError):
+            build_command("131", "DEV", command, resin=True)
+
+
+def test_kobra_commands_are_unchanged():
+    topic, body = build_command("20029", "DEV", "pause", ts=1, msgid="m")
+    assert topic == f"{PREFIX}/web/printer/20029/DEV/print"
+    assert body["data"] == {"taskid": "-1"}
+
+
+def test_a_p1_pause_is_the_users():
+    """Code 401, from the printer's own screen as from Workshop (both captured)."""
+    reason = parse_reason({"code": 401, "state": "paused", "msg": ""})
+    assert reason.by_user and reason.reason == "Paused by user"
+
+
+async def test_the_capture_wait_ends_on_the_p1s_start_answer(hass):
+    coord = await _coordinator(hass)
+    coord._video_report = asyncio.Event()
+    coord._on_report("video", {"action": "stopCapture", "state": "done", "code": 200,
+                               "msg": "LanStream stop success", "data": None})
+    await hass.async_block_till_done()
+    assert not coord._video_report.is_set()
+    coord._on_report("video", {"action": "startCapture", "state": "initSuccess", "code": 200,
+                               "msg": "LanStream start success", "data": None})
+    await hass.async_block_till_done()
+    assert coord._video_report.is_set()
+
+
+async def test_a_switched_light_is_tracked(hass):
+    coord = await _coordinator(hass)
+    coord._on_report("light", {"action": "control", "state": "done", "code": 200,
+                               "data": {"type": 3, "status": 1}})
+    await hass.async_block_till_done()
+    assert coord.data.camera_light.on is True
 
 
 # ------------------------------------------- another client takes the session (Workshop)
